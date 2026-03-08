@@ -1160,7 +1160,6 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "openai" },
     { name = "pillow" },
-    { name = "pyyaml" },
     { name = "rich" },
     { name = "sentence-transformers" },
 ]
@@ -1177,7 +1176,6 @@ requires-dist = [
     { name = "mcp", extras = ["cli"] },
     { name = "openai" },
     { name = "pillow" },
-    { name = "pyyaml" },
     { name = "rich" },
     { name = "sentence-transformers", specifier = ">=5.2.3" },
     { name = "sentence-transformers", marker = "extra == 'local'" },

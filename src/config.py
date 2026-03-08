@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
+DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.json"
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
@@ -24,6 +24,9 @@ class EmbeddingConfig:
 class VisionConfig:
     provider: str = "openai"
     model: str = "gpt-4o"
+    api_key: str | None = None
+    base_url: str | None = None
+    skip: bool = False  # True 时跳过图片描述，不调用 Vision API
 
 
 @dataclass
@@ -69,6 +72,9 @@ class AppConfig:
             "vision": {
                 "provider": self.vision.provider,
                 "model": self.vision.model,
+                "skip": self.vision.skip,
+                **({"api_key": self.vision.api_key} if self.vision.api_key else {}),
+                **({"base_url": self.vision.base_url} if self.vision.base_url else {}),
             },
             "storage": {
                 "persist_dir": self.storage.persist_dir,
@@ -78,7 +84,7 @@ class AppConfig:
             "sources": self.sources,
         }
         with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def load_config(path: Path | str | None = None) -> AppConfig:
@@ -89,7 +95,7 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         return cfg
 
     with open(path, encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+        raw = json.load(f) or {}
 
     emb = raw.get("embedding", {})
     vis = raw.get("vision", {})
@@ -104,6 +110,9 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         vision=VisionConfig(
             provider=vis.get("provider", "openai"),
             model=vis.get("model", "gpt-4o"),
+            api_key=vis.get("api_key") or None,
+            base_url=vis.get("base_url") or None,
+            skip=vis.get("skip", False),
         ),
         storage=StorageConfig(
             persist_dir=sto.get("persist_dir", "./data/chromadb"),

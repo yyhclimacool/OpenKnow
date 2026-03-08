@@ -1,0 +1,24 @@
+{
+  "embedding": {
+    "local_model": "BAAI/bge-small-zh-v1.5",
+    "openai_model": "text-embedding-3-small",
+    "provider": "local"
+  },
+  "vision": {
+    "skip": true,
+    "model": "qwen3-vl-plus",
+    "provider": "openai",
+    "api_key": "sk-7e7cb7625a46f4358b19de6d9becd883",
+    "base_url": "https://apis.iflow.cn/v1"
+  },
+  "storage": {
+    "collection_name": "knowledge_base",
+    "notes_dir": "./knowledge/notes",
+    "persist_dir": "./data/chromadb"
+  },
+  "sources": [
+    "/Users/aero/code/knowledge_db/knowledge",
+    "/Users/aero/code/OpenKnow/knowledge",
+    "/Users/youyunhong/code/llm_studio/rich_crawl/knowledge"
+  ]
+}

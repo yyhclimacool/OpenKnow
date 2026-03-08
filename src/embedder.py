@@ -70,7 +70,12 @@ class LocalEmbedder(Embedder):
                 "Install it with: uv pip install 'knowledge-db[local]'"
             )
         logger.info("Loading local embedding model: %s", model_name)
-        self._model = SentenceTransformer(model_name)
+        try:
+            self._model = SentenceTransformer(model_name, local_files_only=True)
+            logger.info("Loaded model from local cache")
+        except Exception:
+            logger.info("Local cache miss, downloading model: %s", model_name)
+            self._model = SentenceTransformer(model_name)
         self._dim = self._model.get_sentence_embedding_dimension()
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:

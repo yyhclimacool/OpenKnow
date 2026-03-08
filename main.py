@@ -9,21 +9,68 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.live import Live
 from rich.table import Table
+from rich.text import Text
 
 from src.config import load_config
 from src.logging_config import setup_logging
 from src.searcher import KnowledgeBase
+from dotenv import load_dotenv
+
+load_dotenv()
 
 console = Console()
 
 
-def cmd_add(args: argparse.Namespace) -> None:
+class _StatusWithLog:
+    """可渲染对象：状态文本 + 5 行日志，每次刷新时读取 log_buffer 最新内容。"""
+
+    def __init__(self, status_text: str, log_buffer: list[str]) -> None:
+        self.status_text = status_text
+        self.log_buffer = log_buffer
+
+    def __rich_console__(self, console: Console, options):  # type: ignore[no-untyped-def]
+        lines = list(self.log_buffer[-5:]) if self.log_buffer else [""] * 5
+        while len(lines) < 5:
+            lines.insert(0, "")
+        part = Text()
+        part.append(self.status_text + "\n", style="bold green")
+        for i, line in enumerate(lines):
+            prefix = "log: " if i == 0 else "     "
+            part.append(prefix + (line or " ")[:78] + "\n", style="dim")
+        yield part
+
+
+def cmd_add(args: argparse.Namespace, log_buffer: list[str] | None = None) -> None:
     kb = KnowledgeBase()
+    # 模型加载前使用标准日志，避免 log_buffer 模式导致 HuggingFace 网络请求 Bad file descriptor
+    if log_buffer is not None:
+        setup_logging(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            console=True,
+            log_buffer=None,
+        )
+    _ = kb.embedder
+    if log_buffer is not None:
+        log_buffer.clear()
+        setup_logging(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            console=False,
+            log_buffer=log_buffer,
+            log_buffer_lines=5,
+        )
     for directory in args.directories:
         path = Path(directory).resolve()
-        with console.status(f"[bold green]Indexing {path}..."):
-            result = kb.add_directory(path)
+        if log_buffer is not None:
+            log_buffer.clear()
+            status_text = f"Indexing {path}..."
+            display = _StatusWithLog(status_text, log_buffer)
+            with Live(display, refresh_per_second=4, console=console):
+                result = kb.add_directory(path)
+        else:
+            with console.status(f"[bold green]Indexing {path}..."):
+                result = kb.add_directory(path)
         console.print(f"[green]Done:[/green] {result['documents']} documents -> {result['chunks']} chunks")
 
 
@@ -66,15 +113,34 @@ def cmd_status(args: argparse.Namespace) -> None:
         console.print("\n[yellow]No sources configured. Use 'add' to add directories.[/yellow]")
 
 
-def cmd_reindex(args: argparse.Namespace) -> None:
+def cmd_reindex(args: argparse.Namespace, log_buffer: list[str] | None = None) -> None:
     kb = KnowledgeBase()
     sources = kb.list_sources()
     if not sources:
         console.print("[yellow]No sources to reindex.[/yellow]")
         return
 
-    with console.status("[bold green]Reindexing all sources..."):
-        results = kb.reindex_all()
+    if log_buffer is not None:
+        setup_logging(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            console=True,
+            log_buffer=None,
+        )
+    _ = kb.embedder
+    if log_buffer is not None:
+        log_buffer.clear()
+        setup_logging(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            console=False,
+            log_buffer=log_buffer,
+            log_buffer_lines=5,
+        )
+        display = _StatusWithLog("Reindexing all sources...", log_buffer)
+        with Live(display, refresh_per_second=4, console=console):
+            results = kb.reindex_all()
+    else:
+        with console.status("[bold green]Reindexing all sources..."):
+            results = kb.reindex_all()
 
     for src, result in results.items():
         console.print(f"[green]{src}:[/green] {result['documents']} docs -> {result['chunks']} chunks")
@@ -139,9 +205,13 @@ def cli_main() -> None:
 
     args = parser.parse_args()
 
+    use_log_area = args.command in ("add", "reindex")
+    log_buffer: list[str] | None = [] if use_log_area else None
     setup_logging(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        console=args.verbose,
+        console=args.verbose and not use_log_area,
+        log_buffer=log_buffer,
+        log_buffer_lines=5,
     )
 
     commands = {
@@ -154,7 +224,11 @@ def cli_main() -> None:
     }
 
     if args.command in commands:
-        commands[args.command](args)
+        fn = commands[args.command]
+        if args.command in ("add", "reindex"):
+            fn(args, log_buffer=log_buffer)
+        else:
+            fn(args)
     else:
         parser.print_help()
 

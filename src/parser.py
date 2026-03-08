@@ -13,6 +13,30 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 MARKDOWN_IMAGE_RE = re.compile(r"(!\[([^\]]*)\]\(([^)]+)\))")
 
+_VISION_TIMEOUT = 15.0   # seconds per request (before retries)
+_VISION_MAX_RETRIES = 1  # one retry at most
+_CIRCUIT_BREAKER_THRESHOLD = 3  # consecutive failures before giving up
+
+
+@dataclass
+class _VisionCircuitBreaker:
+    """Tracks consecutive Vision API failures and opens the circuit after threshold."""
+    consecutive_failures: int = 0
+    is_open: bool = False
+
+    def record_failure(self) -> None:
+        self.consecutive_failures += 1
+        if not self.is_open and self.consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            self.is_open = True
+            logger.warning(
+                "Vision API circuit breaker opened after %d consecutive failures — "
+                "skipping remaining image descriptions for this run.",
+                self.consecutive_failures,
+            )
+
+    def record_success(self) -> None:
+        self.consecutive_failures = 0
+
 
 @dataclass
 class ParsedDocument:
@@ -29,9 +53,15 @@ def _is_image(path: Path) -> bool:
 
 def _describe_image(image_path: Path, vision_cfg: VisionConfig, alt_text: str = "") -> str:
     """Use Vision API to generate a text description of an image."""
-    from openai import OpenAI
+    import httpx
+    from openai import APITimeoutError, OpenAI
 
-    client = OpenAI()
+    client = OpenAI(
+        timeout=_VISION_TIMEOUT,
+        max_retries=_VISION_MAX_RETRIES,
+        api_key=vision_cfg.api_key or None,
+        base_url=vision_cfg.base_url or None,
+    )
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
 
@@ -63,19 +93,34 @@ def _describe_image(image_path: Path, vision_cfg: VisionConfig, alt_text: str = 
             max_tokens=1024,
         )
         return resp.choices[0].message.content or ""
-    except Exception:
-        logger.exception("Failed to describe image: %s", image_path)
-        return ""
+    except Exception as e:
+        if isinstance(e, (APITimeoutError, httpx.ConnectTimeout, httpx.ReadTimeout)):
+            logger.exception("Failed to describe image: %s", image_path)
+            return ""
+        raise  # BadRequestError、AuthenticationError 等 API 错误直接抛出，程序退出
 
 
-def _expand_images(md_content: str, md_path: Path, vision_cfg: VisionConfig) -> str:
+def _expand_images(
+    md_content: str,
+    md_path: Path,
+    vision_cfg: VisionConfig,
+    circuit: _VisionCircuitBreaker,
+) -> str:
     """Replace inline image references with Vision API descriptions."""
 
     def replace_match(m: re.Match) -> str:
         _full, alt, src = m.group(1), m.group(2), m.group(3)
 
         if src.startswith(("http://", "https://")):
-            logger.debug("Skipping remote image: %s", src)
+            logger.debug("Skipping remote image: %s", src[:80])
+            return _full
+
+        if src.startswith("data:"):
+            logger.debug("Skipping inline base64 image")
+            return _full
+
+        if circuit.is_open:
+            logger.debug("Vision API circuit open, skipping: %s", src)
             return _full
 
         img_path = (md_path.parent / src).resolve()
@@ -86,8 +131,10 @@ def _expand_images(md_content: str, md_path: Path, vision_cfg: VisionConfig) -> 
         logger.info("Describing image via Vision API: %s (alt=%r)", img_path.name, alt)
         description = _describe_image(img_path, vision_cfg, alt_text=alt)
         if not description:
+            circuit.record_failure()
             return _full
 
+        circuit.record_success()
         label = alt or img_path.stem
         return f"[图片：{label}]\n{description}"
 
@@ -95,13 +142,15 @@ def _expand_images(md_content: str, md_path: Path, vision_cfg: VisionConfig) -> 
 
 
 def parse_markdown(
-    path: Path, vision_cfg: VisionConfig | None = None
+    path: Path,
+    vision_cfg: VisionConfig | None = None,
+    circuit: _VisionCircuitBreaker | None = None,
 ) -> ParsedDocument:
     """Parse a markdown file, expanding inline images via Vision API if configured."""
     text = path.read_text(encoding="utf-8")
 
-    if vision_cfg and MARKDOWN_IMAGE_RE.search(text):
-        text = _expand_images(text, path, vision_cfg)
+    if vision_cfg and not vision_cfg.skip and not (circuit and circuit.is_open) and MARKDOWN_IMAGE_RE.search(text):
+        text = _expand_images(text, path, vision_cfg, circuit or _VisionCircuitBreaker())
 
     title = ""
     for line in text.splitlines():
@@ -125,16 +174,24 @@ def scan_directory(
 
     Images referenced inline in markdown are described via Vision API and
     their descriptions are embedded into the document content.
+    A shared circuit breaker stops Vision API calls if they consistently time out.
     """
     docs: list[ParsedDocument] = []
+    circuit = _VisionCircuitBreaker()
 
     md_files = sorted(directory.rglob("*.md"))
     logger.info("Found %d markdown files in %s", len(md_files), directory)
     for md_path in md_files:
         logger.info("Parsing: %s", md_path.relative_to(directory) if md_path.is_relative_to(directory) else md_path)
-        doc = parse_markdown(md_path, vision_cfg=vision_cfg)
+        doc = parse_markdown(md_path, vision_cfg=vision_cfg, circuit=circuit)
         docs.append(doc)
         logger.debug("  -> title=%r, %d chars", doc.title or "(none)", len(doc.content))
+
+    if circuit.is_open:
+        logger.warning(
+            "Vision API was unavailable during this run — image descriptions were skipped. "
+            "Check your OpenAI API key and network, then re-run 'reindex' to re-process images."
+        )
 
     logger.info("Scanned %s: %d markdown files", directory, len(docs))
     return docs
