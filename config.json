@@ -8,7 +8,7 @@
     "skip": true,
     "model": "qwen3-vl-plus",
     "provider": "openai",
-    "api_key": "sk-7e7cb7625a46f4358b19de6d9becd883",
+    "api_key": "sk-xxx",
     "base_url": "https://apis.iflow.cn/v1"
   },
   "storage": {
