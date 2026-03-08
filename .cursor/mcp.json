@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "knowledge-db": {
+      "command": "/Users/aero/code/knowledge_db/.venv/bin/python",
+      "args": [
+        "/Users/aero/code/knowledge_db/mcp_server.py"
+      ]
+    }
+  }
+}

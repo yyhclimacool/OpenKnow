@@ -1,0 +1,14 @@
+embedding:
+  local_model: BAAI/bge-small-zh-v1.5
+  openai_model: text-embedding-3-small
+  provider: local
+sources:
+- /Users/aero/code/knowledge_db/knowledge
+- /Users/aero/code/OpenKnow/knowledge
+storage:
+  collection_name: knowledge_base
+  notes_dir: ./knowledge/notes
+  persist_dir: ./data/chromadb
+vision:
+  model: gpt-4o
+  provider: openai
