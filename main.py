@@ -89,7 +89,8 @@ def cmd_search(args: argparse.Namespace) -> None:
         if r.heading_chain:
             console.print(f"[dim]Section: {r.heading_chain}[/dim]")
         console.print()
-        console.print(r.content[:500] + ("..." if len(r.content) > 500 else ""))
+        preview_len = 2000
+        console.print(r.content[:preview_len] + ("..." if len(r.content) > preview_len else ""))
 
 
 def cmd_status(args: argparse.Namespace) -> None:

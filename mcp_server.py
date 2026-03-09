@@ -59,11 +59,12 @@ def search_knowledge(query: str, top_k: int = 5, source_filter: str | None = Non
 
     output_parts: list[str] = []
     for i, r in enumerate(results, 1):
+        section_line = f"Section: {r.heading_chain}\n" if r.heading_chain else ""
         output_parts.append(
             f"--- Result {i} (relevance: {r.relevance_score:.2%}) ---\n"
             f"Source: {r.source_path}\n"
-            f"Section: {r.heading_chain}\n"
-            f"\n{r.content}\n"
+            f"{section_line}\n"
+            f"{r.content}\n"
         )
 
     return "\n".join(output_parts)

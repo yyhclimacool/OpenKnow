@@ -163,18 +163,40 @@ class KnowledgeBase:
         source_filter: str | None = None,
     ) -> list[KnowledgeSearchResult]:
         query_embedding = self.embedder.embed_query(query)
-        results = self._store.search(query_embedding, top_k=top_k, source_filter=source_filter)
+        # 多取一些 chunk，按文档去重后仍能返回 top_k 个文档
+        fetch_k = max(top_k * 5, 50)
+        chunk_results = self._store.search(
+            query_embedding, top_k=fetch_k, source_filter=source_filter
+        )
 
-        return [
-            KnowledgeSearchResult(
-                content=r.content,
-                source_path=r.source_path,
-                heading_chain=r.heading_chain,
-                relevance_score=1.0 - r.distance,
-                doc_type=r.doc_type,
+        # 按 source_path 分组，取每个文档最佳分数及对应 chunk 内容（图片等无法读文本时用）
+        doc_best: dict[str, tuple[float, str]] = {}
+        for r in chunk_results:
+            score = 1.0 - r.distance
+            if r.source_path not in doc_best or score > doc_best[r.source_path][0]:
+                doc_best[r.source_path] = (score, r.content)
+
+        # 按分数排序，取 top_k 个文档
+        sorted_docs = sorted(
+            doc_best.items(), key=lambda x: x[1][0], reverse=True
+        )[:top_k]
+
+        out: list[KnowledgeSearchResult] = []
+        for source_path, (relevance_score, chunk_content) in sorted_docs:
+            try:
+                full_content = Path(source_path).read_text(encoding="utf-8")
+            except OSError:
+                full_content = chunk_content
+            out.append(
+                KnowledgeSearchResult(
+                    content=full_content,
+                    source_path=source_path,
+                    heading_chain="",
+                    relevance_score=relevance_score,
+                    doc_type="markdown",
+                )
             )
-            for r in results
-        ]
+        return out
 
     def get_stats(self) -> dict:
         stats = self._store.get_stats()
